@@ -88,7 +88,7 @@ static void signal_handler(int signo)
 {
     printf("SIGINT: Closing accessory\n");
     stop_rc = 1;
-    usleep(10000);
+    usleep(100000);
     exit(-1);
 }
 
@@ -196,11 +196,13 @@ void *gst_show(void *arg)
     data.pipeline = gst_pipeline_new("pipeline");
     data.appsrc   = gst_element_factory_make("appsrc", "videosrc");
     data.conv1    = gst_element_factory_make ("videoconvert", "conv1");
-    data.conv2    = gst_element_factory_make ("nvvidconv", "conv2");
+    data.filter1  = gst_element_factory_make ("capsfilter", "filter1");
+    //data.conv2    = gst_element_factory_make ("nvvidconv", "conv2");
     data.mTextOverlay = gst_element_factory_make ("textoverlay", "textoverlay");
     data.sink     = gst_element_factory_make ("nv3dsink", "sink");
+    //data.sink     = gst_element_factory_make ("nvdrmvideosink", "sink");
 
-    if (!data.pipeline || !data.appsrc || !data.conv1 || !data.sink) {
+    if (!data.pipeline || !data.appsrc || !data.conv1 || !data.filter1 || !data.sink) {
         g_printerr("One element could not be created.\n");
     }
 
@@ -216,11 +218,16 @@ void *gst_show(void *arg)
             "framerate", GST_TYPE_FRACTION, 30, 1,
             "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL), NULL);
 
+    g_object_set (G_OBJECT (data.filter1), "caps",
+        gst_caps_new_simple ("video/x-raw",
+            "format", G_TYPE_STRING, "BGRx", NULL), NULL);
+
     g_object_set(data.sink, "sync", false, NULL);
+    g_object_set(data.sink, "async", false, NULL);
 
     //nv3dsink -e
-    gst_bin_add_many(GST_BIN(data.pipeline), data.appsrc, data.conv1, data.sink, NULL);
-    gst_element_link_many(data.appsrc, data.conv1, data.sink, NULL);
+    gst_bin_add_many(GST_BIN(data.pipeline), data.appsrc, data.conv1, data.filter1, data.sink, NULL);
+    gst_element_link_many(data.appsrc, data.conv1, data.filter1, data.sink, NULL);
 
     g_signal_connect(data.appsrc, "need-data", G_CALLBACK(cb_need_data), NULL);
 
@@ -236,7 +243,6 @@ void *gst_show(void *arg)
     g_main_loop_unref(data.loop);
 }
 
-//gst-launch-1.0 rtspsrc location=rtsp://192.168.1.6:8554/test latency=0 ! rtph264depay ! h264parse ! queue ! omxh264dec ! nvoverlaysink sync=false async=false
 //ffmpeg  -i rtsp://192.168.1.6:8554/test -vcodec  copy  -t 60  -y test.mp4
 typedef struct
 {
@@ -403,13 +409,18 @@ void *captureImage(void *arg)
     unsigned int framerate = 0;
     unsigned int frame_num = 0;
     cv::VideoCapture capture;
-    //capture.open("v4l2src device=/dev/video0 ! videoconvert ! video/x-raw, format=(string)BGR, width=1920,height=1080 ! appsink", cv::CAP_GSTREAMER);
-    //usb cam
+    //camera source support: usb camera, csi, rtsp
+    //usb cam: MJPG
     capture.open("v4l2src device=/dev/video0 ! image/jpeg,width=1920,height=1080,framerate=30/1 ! nvv4l2decoder mjpeg=1 ! nvvidconv flip-method=0 ! video/x-raw,width=1920,height=1080,format=BGRx ! videoconvert ! video/x-raw, format=(string)BGR ! appsink", cv::CAP_GSTREAMER);
-    //csi cam
+    //usb cam: UYVY
+    //capture.open("v4l2src device=/dev/video0 ! video/x-raw, width=1920, height=1080, format=UYVY, framerate=30/1 ! videoconvert ! video/x-raw, format=(string)BGR, width=1920,height=1080 ! appsink max-buffers=1 drop=false sync=false", cv::CAP_GSTREAMER);
+
+    //csi
     //capture.open("nvarguscamerasrc sensor-id=0 ! video/x-raw(memory:NVMM),width=1920,height=1080 ! nvvidconv flip-method=2 ! video/x-raw,width=1920,height=1080,format=(string)I420 ! videoconvert ! video/x-raw, format=(string)BGR ! appsink", cv::CAP_GSTREAMER);
     //capture.open("nvarguscamerasrc sensor-id=0 ! video/x-raw(memory:NVMM),width=1920,height=1080, format=(string)NV12 ! nvvidconv flip-method=2 ! video/x-raw,width=1920,height=1080,format=(string)BGRx ! videoconvert ! video/x-raw, format=(string)BGR ! appsink", cv::CAP_GSTREAMER);
-    //capture.open("v4l2src device=/dev/video0 ! video/x-raw, width=1920, height=1080, format=UYVY, framerate=30/1 ! videoconvert ! video/x-raw, format=(string)BGR, width=1920,height=1080 ! appsink max-buffers=1 drop=false sync=false", cv::CAP_GSTREAMER);
+
+    //rtsp
+    //capture.open("rtspsrc location=rtsp://admin:hyzn1234@192.168.1.64:554/h264/ch1/main/av_stream latency=0 ! rtph264depay ! h264parse ! nvv4l2decoder ! nvvidconv flip-method=2 ! video/x-raw, width=(int)1920, height=(int)1080, format=(string)BGRx ! videoconvert ! video/x-raw, format=(string)BGR ! appsink sync=false", cv::CAP_GSTREAMER);
 
     if(!capture.isOpened()){
         std::cout<<"VideoCapture or VideoWriter not opened"<<std::endl;
@@ -486,7 +497,6 @@ void *captureImage(void *arg)
         capture.release();
         cv::destroyAllWindows();
     }
-    stop_rc = true;
 }
 
 bool parse_args(int argc, char** argv) {
@@ -555,7 +565,7 @@ int main(int argc, char** argv)
 
         //save pic
         //cv::imwrite("test.jpg", frame);
-        sleep(1);
+        usleep(10000);
     }
     return 0;
 }
