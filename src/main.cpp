@@ -60,13 +60,15 @@ cv::Mat Image;
 char BGR_IMG[WIDTH*HEIGHT*3] = {0};
 
 typedef struct _CustomData {
-    GstElement *pipeline, *appsrc, *parse, *decoder, *scale, *filter1, *conv1, *conv2, *encoder, *filter2, *sink, *mTextOverlay;
+    GstElement *pipeline, *appsrc, *parse, *decoder, *scale, *filter1, *conv1, *conv2, *encoder, *filter2, *sink, *mTextOverlay, *gdkpixbufoverlay;
     GMainLoop *loop;
     GstBus *bus;
     guint bus_watch_id;
     gboolean playing;  /* Playing or Paused */
     gdouble rate;      /* Current playback rate (can be negative) */
 } CustomData;
+
+CustomData data;
 
 typedef struct Msg
 {
@@ -92,6 +94,7 @@ static void signal_handler(int signo)
     exit(-1);
 }
 
+int frame_num = 0;
 static void cb_need_data(GstElement *appsrc, guint size, gpointer user_data)
 {
     GstBuffer *buf;
@@ -124,6 +127,35 @@ static void cb_need_data(GstElement *appsrc, guint size, gpointer user_data)
     GST_BUFFER_PTS(buf) = timestamp;
     GST_BUFFER_DURATION(buf) = gst_util_uint64_scale_int(1, GST_MSECOND, 30);
     timestamp += GST_BUFFER_DURATION(buf);
+    //add overlay
+    frame_num++;
+    std::string text_frame = to_string(frame_num);
+    //g_object_set (G_OBJECT (data.mTextOverlay), "font_desc", "Ahafoni CLM Bold 20", NULL);
+    //g_object_set (G_OBJECT (data.mTextOverlay), "font_desc", "Ubuntu Mono 12pt", NULL);
+    g_object_set (G_OBJECT (data.mTextOverlay), "font_desc", "Sans 15", NULL);
+    g_object_set (G_OBJECT (data.mTextOverlay), "xpad", 15, NULL);
+    g_object_set (G_OBJECT (data.mTextOverlay), "ypad", 0, NULL);
+    g_object_set (G_OBJECT (data.mTextOverlay), "wrap-mode", -1, NULL); // no wrapping
+    g_object_set (G_OBJECT (data.mTextOverlay), "scale-mode", 2, NULL); // display
+    g_object_set (G_OBJECT (data.mTextOverlay), "color", 0xFFFFFFE0, NULL);
+    g_object_set (G_OBJECT (data.mTextOverlay), "valignment", 2,NULL);//up
+    g_object_set (G_OBJECT (data.mTextOverlay), "halignment", 0,NULL);//left
+    g_object_set (G_OBJECT (data.mTextOverlay), "shaded-background", FALSE, NULL);
+    g_object_set (G_OBJECT (data.mTextOverlay), "text", text_frame.c_str(), NULL);
+
+    //g_object_set (G_OBJECT (data.mTextOverlay), "valignment", 1,NULL);//down
+    //g_object_set (G_OBJECT (data.mTextOverlay), "valignment", 2,NULL);//up
+    //g_object_set (G_OBJECT (data.mTextOverlay), "valignment", 4,NULL);//center
+    //g_object_set (G_OBJECT (data.mTextOverlay), "halignment", 0,NULL);//left
+    //g_object_set (G_OBJECT (data.mTextOverlay), "halignment", 1,NULL);//center
+    //g_object_set (G_OBJECT (data.mTextOverlay), "halignment", 2,NULL);//right
+    //g_object_set (data.mTextOverlay, "text", text_frame.c_str(), NULL);
+
+    //add pixbufoverlay
+    //g_object_set(data.gdkpixbufoverlay, "location", "/home/nvidia/Pictures/test.png", NULL);
+    //g_object_set(data.gdkpixbufoverlay, "offset-x", 100, NULL);
+    //g_object_set(data.gdkpixbufoverlay, "offset-y", 100, NULL);
+
     g_signal_emit_by_name(appsrc, "push-buffer", buf, &ret);
 
     if(buf){
@@ -182,7 +214,7 @@ void *gst_show(void *arg)
         usleep(100);
     }
     // init GStreamer
-    CustomData data;
+    //CustomData data;
     GIOChannel *io_stdin;
     gst_init(NULL, NULL);
     memset(&data, 0, sizeof(data));
@@ -199,10 +231,11 @@ void *gst_show(void *arg)
     data.filter1  = gst_element_factory_make ("capsfilter", "filter1");
     //data.conv2    = gst_element_factory_make ("nvvidconv", "conv2");
     data.mTextOverlay = gst_element_factory_make ("textoverlay", "textoverlay");
+    data.gdkpixbufoverlay = gst_element_factory_make ("gdkpixbufoverlay", "overlaytool");
     data.sink     = gst_element_factory_make ("nv3dsink", "sink");
     //data.sink     = gst_element_factory_make ("nvdrmvideosink", "sink");
 
-    if (!data.pipeline || !data.appsrc || !data.conv1 || !data.filter1 || !data.sink) {
+    if (!data.pipeline || !data.appsrc || !data.conv1 || !data.filter1 || !data.mTextOverlay || !data.gdkpixbufoverlay || !data.sink) {
         g_printerr("One element could not be created.\n");
     }
 
@@ -219,15 +252,17 @@ void *gst_show(void *arg)
             "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL), NULL);
 
     g_object_set (G_OBJECT (data.filter1), "caps",
-        gst_caps_new_simple ("video/x-raw",
+        gst_caps_new_simple ("video/x-raw(memory:NVMM)",
             "format", G_TYPE_STRING, "BGRx", NULL), NULL);
 
     g_object_set(data.sink, "sync", false, NULL);
     g_object_set(data.sink, "async", false, NULL);
 
     //nv3dsink -e
-    gst_bin_add_many(GST_BIN(data.pipeline), data.appsrc, data.conv1, data.filter1, data.sink, NULL);
-    gst_element_link_many(data.appsrc, data.conv1, data.filter1, data.sink, NULL);
+    gst_bin_add_many(GST_BIN(data.pipeline), data.appsrc, data.conv1, data.filter1, data.mTextOverlay, data.gdkpixbufoverlay, data.sink, NULL);
+    gst_element_link_many(data.appsrc, data.conv1, data.filter1, data.mTextOverlay, data.gdkpixbufoverlay, data.sink, NULL);
+    //gst_bin_add_many(GST_BIN(data.pipeline), data.appsrc, data.conv1, data.filter1, data.sink, NULL);
+    //gst_element_link_many(data.appsrc, data.conv1, data.filter1, data.sink, NULL);
 
     g_signal_connect(data.appsrc, "need-data", G_CALLBACK(cb_need_data), NULL);
 
