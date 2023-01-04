@@ -14,12 +14,16 @@
 #include <algorithm>
 #include <memory>
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <ctime>
 using std::cerr;
 using std::endl;
 
 //
 // socket related abstractions:
 //
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -133,6 +137,20 @@ public:
         if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse)) < 0)
             cerr << "setsockopt(SO_REUSEADDR) failed" << endl;
 
+        // Non-blocking sockets
+        // Windows: ioctlsocket() and FIONBIO
+        // Linux: fcntl() and O_NONBLOCK
+#ifdef WIN32
+        unsigned long i_mode = 1;
+        int result = ioctlsocket(sock, FIONBIO, &i_mode);
+        if (result != NO_ERROR) {
+            std::cerr << "ioctlsocket(FIONBIO) failed with error: " << result << std::endl;
+        }
+#else // WIN32
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+#endif // WIN32
+
 #ifdef SO_REUSEPORT
         if (setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, (const char*)&reuse, sizeof(reuse)) < 0)
             cerr << "setsockopt(SO_REUSEPORT) failed" << endl;
@@ -174,7 +192,7 @@ public:
         cv::imencode(".jpg", frame, outbuf, params);  //REMOVED FOR COMPATIBILITY
         // https://docs.opencv.org/3.4/d4/da8/group__imgcodecs.html#ga292d81be8d76901bff7988d18d2b42ac
         //std::cerr << "cv::imencode call disabled!" << std::endl;
-        size_t outlen = outbuf.size();
+        int outlen = static_cast<int>(outbuf.size());
 
 #ifdef _WIN32
         for (unsigned i = 0; i<rread.fd_count; i++)
@@ -230,11 +248,12 @@ public:
                 sprintf(head, "--mjpegstream\r\nContent-Type: image/jpeg\r\nContent-Length: %zu\r\n\r\n", outlen);
                 _write(s, head, 0);
                 int n = _write(s, (char*)(&outbuf[0]), outlen);
-                //cerr << "known client " << s << " " << n << endl;
-                if (n < outlen)
+                //cerr << "known client: " << s << ", sent = " << n << ", must be sent outlen = " << outlen << endl;
+                if (n < (int)outlen)
                 {
                     cerr << "MJPG_sender: kill client " << s << endl;
-                    ::shutdown(s, 2);
+                    //::shutdown(s, 2);
+                    close_socket(s);
                     FD_CLR(s, &master);
                 }
             }

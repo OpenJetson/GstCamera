@@ -595,12 +595,12 @@ int main(int argc, char** argv)
         frame = Mat(HEIGHT, WIDTH, CV_8UC3, BGR_IMG);
         //http server
         //cv::resize(frame, frame, Size(1280, 720), 0, 0, cv::INTER_LINEAR);
-        //send_mjpeg(frame, 8090, 400000, 10);
+        send_mjpeg(frame, 8090, 400000, 70);
         //usleep(10);
 
         //save pic
         //cv::imwrite("test.jpg", frame);
-        usleep(10000);
+        //usleep(10000);
     }
     return 0;
 }
